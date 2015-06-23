@@ -248,8 +248,16 @@ class LogStash::Outputs::S3 < LogStash::Outputs::Base
     begin
       write_on_bucket(test_filename)
       delete_on_bucket(test_filename)
+
+      if @compression
+          delete_on_bucket("#{test_filename}.gz")
+      end
     ensure
       File.delete(test_filename)
+
+      if @compression
+          File.delete("#{test_filename}.gz")
+      end
     end
   end
 
