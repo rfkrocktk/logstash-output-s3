@@ -113,6 +113,9 @@ class LogStash::Outputs::S3 < LogStash::Outputs::Base
   # Specify whether to use Amazon's AES-256 serverside encryption.
   config :server_side_encryption, :validate => :boolean, :default => false
 
+  # Specify whether to compress files with GZip before export to S3.
+  config :compression, :validate => :boolean, :default => true
+
   # Exposed attributes for testing purpose.
   attr_accessor :tempfile
   attr_reader :page_counter
@@ -273,11 +276,19 @@ class LogStash::Outputs::S3 < LogStash::Outputs::Base
     current_time = Time.now
     filename = "ls.s3.#{Socket.gethostname}.#{current_time.strftime("%Y-%m-%dT%H.%M")}"
 
+    result = nil
+
     if @tags.size > 0
-      return "#{filename}.tag_#{@tags.join('.')}.part#{page_counter}.#{TEMPFILE_EXTENSION}"
+      result = "#{filename}.tag_#{@tags.join('.')}.part#{page_counter}.#{TEMPFILE_EXTENSION}"
     else
-      return "#{filename}.part#{page_counter}.#{TEMPFILE_EXTENSION}"
+      result = "#{filename}.part#{page_counter}.#{TEMPFILE_EXTENSION}"
     end
+
+    if @compression
+        result += ".gz"
+    end
+
+    return result
   end
 
   public
@@ -300,6 +311,11 @@ class LogStash::Outputs::S3 < LogStash::Outputs::Base
   def write_to_tempfile(event)
     begin
       @logger.debug("S3: put event into tempfile ", :tempfile => File.basename(@tempfile))
+
+      # compress if necessary
+      if @compression
+          event = Zlib.deflate(event)
+      end
 
       @file_rotation_lock.synchronize do
         @tempfile.syswrite(event)
