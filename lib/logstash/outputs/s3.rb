@@ -146,6 +146,21 @@ class LogStash::Outputs::S3 < LogStash::Outputs::Base
     # find and use the bucket
     bucket = @s3.buckets[@bucket]
 
+    # if compression is enabled, compress the entire file to #{file}.gz
+    if @compression
+        original_filename = file
+        file = "#{original_filename}.gz"
+
+        Zlib::GzipWriter.open(file) do |gz|
+            File.open(original_filename, 'r') do |input|
+                # loop 64kb at a time until file is done
+                while chunk = input.read(64 * 1024)
+                    gz.write chunk
+                end
+            end
+        end
+    end
+
     remote_filename = "#{@prefix}#{File.basename(file)}"
 
     @logger.debug("S3: ready to write file in bucket", :remote_filename => remote_filename, :bucket => @bucket)
@@ -258,6 +273,11 @@ class LogStash::Outputs::S3 < LogStash::Outputs::Base
 
     begin
       File.delete(file)
+
+      if @compression
+         # if compression is on, we generated a file at #{file}.gz, so delete it
+         File.delete("#{file}.gz")
+      end
     rescue Errno::ENOENT
       # Something else deleted the file, logging but not raising the issue
       @logger.warn("S3: Cannot delete the temporary file since it doesn't exist on disk", :filename => File.basename(file))
@@ -276,19 +296,11 @@ class LogStash::Outputs::S3 < LogStash::Outputs::Base
     current_time = Time.now
     filename = "ls.s3.#{Socket.gethostname}.#{current_time.strftime("%Y-%m-%dT%H.%M")}"
 
-    result = nil
-
     if @tags.size > 0
-      result = "#{filename}.tag_#{@tags.join('.')}.part#{page_counter}.#{TEMPFILE_EXTENSION}"
+      return "#{filename}.tag_#{@tags.join('.')}.part#{page_counter}.#{TEMPFILE_EXTENSION}"
     else
-      result = "#{filename}.part#{page_counter}.#{TEMPFILE_EXTENSION}"
+      return "#{filename}.part#{page_counter}.#{TEMPFILE_EXTENSION}"
     end
-
-    if @compression
-        result += ".gz"
-    end
-
-    return result
   end
 
   public
@@ -311,11 +323,6 @@ class LogStash::Outputs::S3 < LogStash::Outputs::Base
   def write_to_tempfile(event)
     begin
       @logger.debug("S3: put event into tempfile ", :tempfile => File.basename(@tempfile))
-
-      # compress if necessary
-      if @compression
-          event = Zlib.deflate(event)
-      end
 
       @file_rotation_lock.synchronize do
         @tempfile.syswrite(event)
